@@ -3,10 +3,10 @@ use shrinkwraprs::Shrinkwrap;
 use std::convert::{TryFrom, TryInto};
 use thiserror::Error;
 
-// TODO: wrap in newtypes
+// TODO: wrap in newtypes?
 pub type ClientID = u16;
 pub type TransactionID = u32;
-pub type AmountFloat = f32; // TODO: bleh, convert to integer and pretend this was never a float :D
+pub type AmountFloat = f32;
 
 #[derive(Error, Debug)]
 pub enum DeserializationError {
@@ -18,6 +18,9 @@ pub enum DeserializationError {
     InvalidType(String),
 }
 
+// TODO: I don't like this type as is right now
+// with some boilerplate it could be made into something
+// better: checking overflow/underflow, verifying precision
 #[derive(Debug, Default, Copy, Clone, Shrinkwrap, PartialOrd, Ord, Eq, PartialEq)]
 #[shrinkwrap(mutable)]
 pub struct Amount(pub u64);
@@ -46,7 +49,7 @@ impl TryFrom<Option<AmountFloat>> for Amount {
 }
 
 // I wanted to go with straight to internally tagged enum
-// with `#[serde(tag = "type")]` but that will not fly with CVS,
+// with `#[serde(tag = "type")]` but that will not fly with CSV,
 // it seems, and I don't have time to dig into it.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]

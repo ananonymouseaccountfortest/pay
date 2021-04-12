@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use shrinkwraprs::Shrinkwrap;
 use std::convert::{TryFrom, TryInto};
 use thiserror::Error;
 
@@ -9,8 +10,6 @@ pub type AmountFloat = f32; // TODO: bleh, convert to integer and pretend this w
 
 #[derive(Error, Debug)]
 pub enum DeserializationError {
-    #[error("invalid amount value")]
-    InvalidAmount,
     #[error("missing amount value")]
     MissingAmount,
     #[error("superfluous amount value")]
@@ -19,7 +18,9 @@ pub enum DeserializationError {
     InvalidType(String),
 }
 
-pub struct Amount(u64);
+#[derive(Debug, Default, Copy, Clone, Shrinkwrap, PartialOrd, Ord, Eq, PartialEq)]
+#[shrinkwrap(mutable)]
+pub struct Amount(pub u64);
 
 // TODO: bad name
 const AMOUNT_DECIMALS: u32 = 1_0000;
@@ -57,9 +58,9 @@ pub struct Raw {
 }
 
 pub struct DepositDetails {
-    client: ClientID,
-    tx: TransactionID,
-    amount: Amount,
+    pub client: ClientID,
+    pub tx: TransactionID,
+    pub amount: Amount,
 }
 
 impl TryFrom<Raw> for DepositDetails {
@@ -73,8 +74,8 @@ impl TryFrom<Raw> for DepositDetails {
     }
 }
 pub struct DisputeDetails {
-    client: ClientID,
-    tx: TransactionID,
+    pub client: ClientID,
+    pub tx: TransactionID,
 }
 
 impl TryFrom<Raw> for DisputeDetails {
@@ -105,6 +106,22 @@ pub enum Payment {
     Chargeback(Chargeback),
 }
 
+impl Payment {
+    /// Get client id
+    ///
+    /// Since all payment types have it, it's useful to
+    /// have it.
+    pub fn get_client_id(&self) -> ClientID {
+        match self {
+            Payment::Deposit(d) => d.client,
+            Payment::Withrawal(d) => d.client,
+            Payment::Dispute(d) => d.client,
+            Payment::Resolve(d) => d.client,
+            Payment::Chargeback(d) => d.client,
+        }
+    }
+}
+
 impl TryFrom<Raw> for Payment {
     type Error = DeserializationError;
     fn try_from(raw: Raw) -> Result<Payment, Self::Error> {
@@ -112,8 +129,8 @@ impl TryFrom<Raw> for Payment {
             "deposit" => Payment::Deposit(raw.try_into()?),
             "withrawal" => Payment::Withrawal(raw.try_into()?),
             "dispute" => Payment::Dispute(raw.try_into()?),
-            "resolve" => Payment::Dispute(raw.try_into()?),
-            "chargeback" => Payment::Dispute(raw.try_into()?),
+            "resolve" => Payment::Resolve(raw.try_into()?),
+            "chargeback" => Payment::Chargeback(raw.try_into()?),
             _ => return Err(DeserializationError::InvalidType(raw.r#type)),
         })
     }
@@ -133,6 +150,7 @@ chargeback,1,1,
     for payment in reader.deserialize() {
         let payment: Raw = payment?;
         println!("{:?}", payment);
-        let payment: Payment = payment.try_into()?;
+        let _payment: Payment = payment.try_into()?;
     }
+    Ok(())
 }

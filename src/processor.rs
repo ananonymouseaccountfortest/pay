@@ -1,15 +1,13 @@
 use crate::payment::{
     Amount, Chargeback, ClientID, Deposit, Dispute, Payment, Resolve, TransactionID, Withrawal,
 };
-use fnv::FnvHashMap;
+use fnv::{FnvHashMap, FnvHashSet};
 use thiserror::Error;
 
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum Error {
-    #[error("invalid account state")]
-    InvalidAccountState,
     #[error("balance overflow in account")]
     Overflow,
     #[error("balance underflow in account")]
@@ -18,6 +16,10 @@ pub enum Error {
     TransactionAlreadyExists,
     #[error("transaction not found")]
     TransactionNotFound,
+    #[error("transaction not under dispute")]
+    TransactionNotDisputed,
+    #[error("transaction already under dispute")]
+    TransactionAlreadyDisputed,
     #[error("wrong transaction type")]
     WrongTransactionType,
     #[error("account locked")]
@@ -46,16 +48,16 @@ pub enum PastTransaction {
 // Operations on it are immutable, so it's
 // more natural to attempt a given operation
 // and only if it was successful, mutate
-// state and other parts of `Account`
+// state and other parts of the `Account`
 #[derive(Debug, Default, Clone)]
 pub struct AccountState {
     // TODO: it remains unclear to me what exactly should be dissallowed after
     // account has been locked
-    locked: bool,
+    pub locked: bool,
     // not storing `available_funds` since it's a straight `total - held` right now
     // but it could be added later if necessary (more cases than just held)
-    total_funds: Amount,
-    held_funds: Amount,
+    pub total_funds: Amount,
+    pub held_funds: Amount,
 }
 
 impl AccountState {
@@ -72,7 +74,7 @@ impl AccountState {
             .checked_add(*amount)
             .ok_or_else(|| Error::Overflow)?;
 
-        new.ensure_valid_state()
+        Ok(new)
     }
 
     #[must_use]
@@ -89,7 +91,7 @@ impl AccountState {
             .checked_sub(*amount)
             .ok_or_else(|| Error::Underflow)?;
 
-        new.ensure_valid_state()
+        Ok(new)
     }
 
     #[must_use]
@@ -106,7 +108,7 @@ impl AccountState {
             .checked_add(*amount)
             .ok_or_else(|| Error::Overflow)?;
 
-        new.ensure_valid_state()
+        Ok(new)
     }
 
     // TODO: is unhold a really bad name?
@@ -119,7 +121,7 @@ impl AccountState {
             .checked_sub(*amount)
             .ok_or_else(|| Error::Underflow)?;
 
-        new.ensure_valid_state()
+        Ok(new)
     }
 
     #[must_use]
@@ -138,16 +140,7 @@ impl AccountState {
 
         new.locked = true;
 
-        new.ensure_valid_state()
-    }
-
-    // TODO: this is more of a debugging assertion; remove?
-    fn ensure_valid_state(self) -> Result<Self> {
-        if *self.total_funds < *self.held_funds {
-            return Err(Error::InvalidAccountState);
-        }
-
-        Ok(self)
+        Ok(new)
     }
 }
 
@@ -197,22 +190,34 @@ impl Account {
 
     fn dispute(&mut self, details: Dispute) -> Result<()> {
         let past_tx = self.get_past_deposit(details.tx)?;
+        if self.in_dispute.contains(&details.tx) {
+            return Err(Error::TransactionAlreadyDisputed);
+        }
 
         self.state = self.state.hold(past_tx)?;
+        self.in_dispute.insert(details.tx);
         Ok(())
     }
 
     fn resolve(&mut self, details: Resolve) -> Result<()> {
         let past_tx = self.get_past_deposit(details.tx)?;
+        if !self.in_dispute.contains(&details.tx) {
+            return Err(Error::TransactionNotDisputed);
+        }
 
         self.state = self.state.unhold(past_tx)?;
+        self.in_dispute.remove(&details.tx);
         Ok(())
     }
 
     fn chargeback(&mut self, details: Chargeback) -> Result<()> {
         let past_tx = self.get_past_deposit(details.tx)?;
+        if !self.in_dispute.contains(&details.tx) {
+            return Err(Error::TransactionNotDisputed);
+        }
 
         self.state = self.state.chargeback(past_tx)?;
+        self.in_dispute.remove(&details.tx);
         Ok(())
     }
 }
@@ -221,6 +226,7 @@ impl Account {
 struct Account {
     state: AccountState,
     history: FnvHashMap<TransactionID, PastTransaction>,
+    in_dispute: FnvHashSet<TransactionID>,
 }
 
 /**
@@ -337,8 +343,15 @@ fn basic_multi_payment_math_checks_out() -> Result<()> {
     Ok(())
 }
 
+// Note: there's a lot of stuff being tested here; might be
+// better to split it into separate unit-test functions, but that
+// would cause even more boilerplate, setting up the state
+// for each step, and I'm getting a bit tired with this
+// exercise already. In production code I might have
+// do the effort, and maybe add some nice setup
+// code or even macros to make this easier.
 #[test]
-fn funds_on_hold_math_checks_out() -> Result<()> {
+fn funds_on_hold_math_and_basic_flow() -> Result<()> {
     let mut processor = InMemoryProcessor::default();
     let client = 3;
 
@@ -377,10 +390,22 @@ fn funds_on_hold_math_checks_out() -> Result<()> {
     assert_eq!(*processor.get_account(client).unwrap().held_funds, 7);
     assert_eq!(*processor.get_account(client).unwrap().available_funds(), 0);
 
+    // can't dispute same tx twice
+    assert_eq!(
+        processor.process(Payment::Dispute(Dispute { client, tx: 3 })),
+        Err(Error::TransactionAlreadyDisputed)
+    );
+
     // can't resolve wrong tx
     assert_eq!(
-        processor.process(Payment::Resolve(Resolve { client, tx: 5 })),
+        processor.process(Payment::Resolve(Resolve { client, tx: 500 })),
         Err(Error::TransactionNotFound)
+    );
+
+    // can't resolve tx not under dispute
+    assert_eq!(
+        processor.process(Payment::Resolve(Resolve { client, tx: 4 })),
+        Err(Error::TransactionNotDisputed)
     );
 
     // resolve dispute now
@@ -389,6 +414,10 @@ fn funds_on_hold_math_checks_out() -> Result<()> {
     assert_eq!(*processor.get_account(client).unwrap().total_funds, 7);
     assert_eq!(*processor.get_account(client).unwrap().available_funds(), 7);
     assert_eq!(*processor.get_account(client).unwrap().held_funds, 0);
+
+    // can dispute this tx again (?)
+    processor.process(Payment::Dispute(Dispute { client, tx: 3 }))?;
+    processor.process(Payment::Resolve(Resolve { client, tx: 3 }))?;
 
     processor
         .process(Payment::Withrawal(Withrawal {
@@ -402,16 +431,27 @@ fn funds_on_hold_math_checks_out() -> Result<()> {
     assert_eq!(*processor.get_account(client).unwrap().available_funds(), 0);
     assert_eq!(*processor.get_account(client).unwrap().held_funds, 0);
 
+    // trying to dispute this tx again would cause a negative balance
+    assert_eq!(
+        processor.process(Payment::Dispute(Dispute { client, tx: 3 })),
+        Err(Error::Underflow)
+    );
+
+    assert_eq!(*processor.get_account(client).unwrap().total_funds, 0);
+    assert_eq!(*processor.get_account(client).unwrap().available_funds(), 0);
+    assert_eq!(*processor.get_account(client).unwrap().held_funds, 0);
+
     Ok(())
 }
 
 #[test]
 fn withdrawal_underflow() -> Result<()> {
     let mut processor = InMemoryProcessor::default();
+    let client = 3;
 
     processor
         .process(Payment::Deposit(Deposit {
-            client: 3,
+            client,
             tx: 3,
             amount: Amount(1),
         }))
@@ -419,7 +459,7 @@ fn withdrawal_underflow() -> Result<()> {
 
     assert_eq!(
         processor.process(Payment::Withrawal(Withrawal {
-            client: 3,
+            client,
             tx: 4,
             amount: Amount(2),
         })),
@@ -432,9 +472,10 @@ fn withdrawal_underflow() -> Result<()> {
 #[test]
 fn dispute_unknown_tx() -> Result<()> {
     let mut processor = InMemoryProcessor::default();
+    let client = 3;
 
     assert_eq!(
-        processor.process(Payment::Dispute(Dispute { client: 3, tx: 4 })),
+        processor.process(Payment::Dispute(Dispute { client, tx: 4 })),
         Err(Error::TransactionNotFound)
     );
 
@@ -444,11 +485,59 @@ fn dispute_unknown_tx() -> Result<()> {
 #[test]
 fn chargeback_unknown_tx() -> Result<()> {
     let mut processor = InMemoryProcessor::default();
+    let client = 3;
 
     assert_eq!(
-        processor.process(Payment::Chargeback(Dispute { client: 3, tx: 4 })),
+        processor.process(Payment::Chargeback(Dispute { client, tx: 4 })),
         Err(Error::TransactionNotFound)
     );
 
+    Ok(())
+}
+
+#[test]
+fn basic_chargeback_flow() -> Result<()> {
+    let mut processor = InMemoryProcessor::default();
+    let client = 3;
+
+    processor.process(Payment::Deposit(Deposit {
+        client,
+        tx: 0,
+        amount: Amount(2),
+    }))?;
+
+    processor.process(Payment::Deposit(Deposit {
+        client,
+        tx: 1,
+        amount: Amount(1),
+    }))?;
+
+    processor.process(Payment::Dispute(Dispute { client, tx: 0 }))?;
+    assert_eq!(*processor.get_account(client).unwrap().total_funds, 3);
+    assert_eq!(*processor.get_account(client).unwrap().available_funds(), 1);
+    assert_eq!(*processor.get_account(client).unwrap().held_funds, 2);
+    assert_eq!(processor.get_account(client).unwrap().locked, false);
+
+    assert_eq!(
+        processor.process(Payment::Chargeback(Resolve { client, tx: 1 })),
+        Err(Error::TransactionNotDisputed)
+    );
+    assert_eq!(processor.get_account(client).unwrap().locked, false);
+
+    processor.process(Payment::Chargeback(Dispute { client, tx: 0 }))?;
+
+    assert_eq!(*processor.get_account(client).unwrap().total_funds, 1);
+    assert_eq!(*processor.get_account(client).unwrap().available_funds(), 1);
+    assert_eq!(*processor.get_account(client).unwrap().held_funds, 0);
+    assert_eq!(processor.get_account(client).unwrap().locked, true);
+
+    assert_eq!(
+        processor.process(Payment::Withrawal(Withrawal {
+            client,
+            tx: 2,
+            amount: Amount(1),
+        })),
+        Err(Error::AccountLocked)
+    );
     Ok(())
 }

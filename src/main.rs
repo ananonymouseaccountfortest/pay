@@ -36,9 +36,9 @@ fn run() -> anyhow::Result<()> {
     for (client_id, account) in processor.get_all_accounts() {
         writer.serialize(payment::RawOutputRecord {
             client: *client_id,
-            available: account.available_funds().to_f32(),
-            held: account.held_funds.to_f32(),
-            total: account.total_funds.to_f32(),
+            available: account.available_funds().to_f64(),
+            held: account.held_funds.to_f64(),
+            total: account.total_funds.to_f64(),
             locked: account.locked,
         })?;
     }

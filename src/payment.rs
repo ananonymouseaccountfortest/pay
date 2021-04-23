@@ -25,16 +25,20 @@ pub enum DeserializationError {
 pub struct Amount(pub u64);
 
 // TODO: bad name
-const AMOUNT_PRECISION: f32 = 0.0001;
+const AMOUNT_PRECISION: f64 = 0.0001;
 
 impl Amount {
-    pub fn to_f32(self) -> f32 {
-        self.0 as f32 * AMOUNT_PRECISION
+    // TODO: FIXME: This way of converting to float can possibly
+    // still lead to precision loss. It would be better to just
+    // output the number as fixed precision, but since I'm using
+    // csv + server, this is not trivial.
+    pub fn to_f64(self) -> f64 {
+        self.0 as f64 * AMOUNT_PRECISION
     }
 }
-impl TryFrom<f32> for Amount {
+impl TryFrom<f64> for Amount {
     type Error = DeserializationError;
-    fn try_from(amount: f32) -> Result<Self, Self::Error> {
+    fn try_from(amount: f64) -> Result<Self, Self::Error> {
         // TODO: add sanity checks: too large values, precision loss, negative values
         let amount = (amount / AMOUNT_PRECISION) as u64;
 
@@ -42,9 +46,9 @@ impl TryFrom<f32> for Amount {
     }
 }
 
-impl TryFrom<Option<f32>> for Amount {
+impl TryFrom<Option<f64>> for Amount {
     type Error = DeserializationError;
-    fn try_from(amount: Option<f32>) -> Result<Self, Self::Error> {
+    fn try_from(amount: Option<f64>) -> Result<Self, Self::Error> {
         match amount {
             None => Err(DeserializationError::MissingAmount),
             Some(v) => v.try_into(),
@@ -61,15 +65,15 @@ pub struct RawInputRecord {
     pub r#type: String,
     pub client: ClientID,
     pub tx: TransactionID,
-    pub amount: Option<f32>,
+    pub amount: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct RawOutputRecord {
     pub client: ClientID,
-    pub available: f32,
-    pub held: f32,
-    pub total: f32,
+    pub available: f64,
+    pub held: f64,
+    pub total: f64,
     pub locked: bool,
 }
 

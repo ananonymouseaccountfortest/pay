@@ -112,7 +112,7 @@ impl TryFrom<RawInputRecord> for DisputeDetails {
 }
 
 pub type Deposit = DepositDetails;
-pub type Withrawal = DepositDetails;
+pub type Withdrawal = DepositDetails;
 pub type Dispute = DisputeDetails;
 pub type Resolve = DisputeDetails;
 pub type Chargeback = DisputeDetails;
@@ -120,7 +120,7 @@ pub type Chargeback = DisputeDetails;
 #[derive(Clone, Debug)]
 pub enum Payment {
     Deposit(Deposit),
-    Withrawal(Withrawal),
+    Withdrawal(Withdrawal),
     Dispute(Dispute),
     Resolve(Resolve),
     Chargeback(Chargeback),
@@ -134,7 +134,7 @@ impl Payment {
     pub fn get_client_id(&self) -> ClientID {
         match self {
             Payment::Deposit(d) => d.client,
-            Payment::Withrawal(d) => d.client,
+            Payment::Withdrawal(d) => d.client,
             Payment::Dispute(d) => d.client,
             Payment::Resolve(d) => d.client,
             Payment::Chargeback(d) => d.client,
@@ -147,7 +147,7 @@ impl TryFrom<RawInputRecord> for Payment {
     fn try_from(raw: RawInputRecord) -> Result<Payment, Self::Error> {
         Ok(match raw.r#type.as_str() {
             "deposit" => Payment::Deposit(raw.try_into()?),
-            "withrawal" => Payment::Withrawal(raw.try_into()?),
+            "withdrawal" => Payment::Withdrawal(raw.try_into()?),
             "dispute" => Payment::Dispute(raw.try_into()?),
             "resolve" => Payment::Resolve(raw.try_into()?),
             "chargeback" => Payment::Chargeback(raw.try_into()?),
@@ -160,7 +160,7 @@ impl TryFrom<RawInputRecord> for Payment {
 fn test_payment_deserialization() -> anyhow::Result<()> {
     let input = r#"type,client,tx,amount
 deposit,1,1,1.0
-withrawal,1,1,1.0
+withdrawal,1,1,1.0
 dispute,1,1,
 resolve,1,1,
 chargeback,1,1,

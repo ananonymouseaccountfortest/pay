@@ -25,7 +25,10 @@ fn run() -> anyhow::Result<()> {
             // as conditions we should tolerate;
             // TODO: it remains unclear if we should
             // ever have any conditions that should fail the whole execution
-            eprintln!("Error while processing record {} {:?}: {}", i, payment_raw, e);
+            eprintln!(
+                "Error while processing record {} {:?}: {}",
+                i, payment_raw, e
+            );
         }
     }
 

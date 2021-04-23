@@ -1,5 +1,5 @@
 use crate::payment::{
-    Amount, Chargeback, ClientID, Deposit, Dispute, Payment, Resolve, TransactionID, Withrawal,
+    Amount, Chargeback, ClientID, Deposit, Dispute, Payment, Resolve, TransactionID, Withdrawal,
 };
 use fnv::{FnvHashMap, FnvHashSet};
 use thiserror::Error;
@@ -40,7 +40,7 @@ pub trait Processor {
 #[derive(Debug, Clone)]
 pub enum PastTransaction {
     Deposit(Amount),
-    Withrawal(Amount),
+    Withdrawal(Amount),
 }
 
 // State of the account
@@ -154,7 +154,7 @@ impl Account {
             {
                 PastTransaction::Deposit(details) => *details,
                 // seems like disputing withrawals is not supported?
-                PastTransaction::Withrawal(_) => return Err(Error::WrongTransactionType),
+                PastTransaction::Withdrawal(_) => return Err(Error::WrongTransactionType),
             },
         )
     }
@@ -174,7 +174,7 @@ impl Account {
         Ok(())
     }
 
-    fn withdraw(&mut self, details: Withrawal) -> Result<()> {
+    fn withdraw(&mut self, details: Withdrawal) -> Result<()> {
         if self.state.locked {
             return Err(Error::AccountLocked);
         }
@@ -184,7 +184,7 @@ impl Account {
         }
         self.state = self.state.withdraw(details.amount)?;
         self.history
-            .insert(details.tx, PastTransaction::Withrawal(details.amount));
+            .insert(details.tx, PastTransaction::Withdrawal(details.amount));
         Ok(())
     }
 
@@ -244,7 +244,7 @@ impl Processor for InMemoryProcessor {
             Payment::Deposit(details) => {
                 account.deposit(details)?;
             }
-            Payment::Withrawal(details) => {
+            Payment::Withdrawal(details) => {
                 account.withdraw(details)?;
             }
             Payment::Dispute(details) => {
@@ -288,7 +288,7 @@ fn basic_happy_case() -> Result<()> {
         amount: Amount(1),
     }))?;
 
-    processor.process(Payment::Withrawal(Withrawal {
+    processor.process(Payment::Withdrawal(Withdrawal {
         client,
         tx: 4,
         amount: Amount(1),
@@ -322,7 +322,7 @@ fn basic_multi_payment_math_checks_out() -> Result<()> {
         .unwrap();
 
     processor
-        .process(Payment::Withrawal(Withrawal {
+        .process(Payment::Withdrawal(Withdrawal {
             client,
             tx: 5,
             amount: Amount(2),
@@ -330,7 +330,7 @@ fn basic_multi_payment_math_checks_out() -> Result<()> {
         .unwrap();
 
     processor
-        .process(Payment::Withrawal(Withrawal {
+        .process(Payment::Withdrawal(Withdrawal {
             client,
             tx: 6,
             amount: Amount(2),
@@ -379,7 +379,7 @@ fn funds_on_hold_math_and_basic_flow() -> Result<()> {
 
     // withdraw everything while rest is disputed
     processor
-        .process(Payment::Withrawal(Withrawal {
+        .process(Payment::Withdrawal(Withdrawal {
             client,
             tx: 12,
             amount: Amount(1),
@@ -420,7 +420,7 @@ fn funds_on_hold_math_and_basic_flow() -> Result<()> {
     processor.process(Payment::Resolve(Resolve { client, tx: 3 }))?;
 
     processor
-        .process(Payment::Withrawal(Withrawal {
+        .process(Payment::Withdrawal(Withdrawal {
             client,
             tx: 13,
             amount: Amount(7),
@@ -458,7 +458,7 @@ fn withdrawal_underflow() -> Result<()> {
         .unwrap();
 
     assert_eq!(
-        processor.process(Payment::Withrawal(Withrawal {
+        processor.process(Payment::Withdrawal(Withdrawal {
             client,
             tx: 4,
             amount: Amount(2),
@@ -532,7 +532,7 @@ fn basic_chargeback_flow() -> Result<()> {
     assert_eq!(processor.get_account(client).unwrap().locked, true);
 
     assert_eq!(
-        processor.process(Payment::Withrawal(Withrawal {
+        processor.process(Payment::Withdrawal(Withdrawal {
             client,
             tx: 2,
             amount: Amount(1),
